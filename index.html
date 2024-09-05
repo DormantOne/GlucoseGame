@@ -1,0 +1,350 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Hypoglycemic Simulator</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            display: flex;
+            flex-direction: row;
+        }
+        #main {
+            width: 75%;
+        }
+        #sidebar {
+            width: 25%;
+            padding: 20px;
+            border-left: 2px solid #ccc;
+            overflow-y: auto;
+            height: 100vh;
+        }
+        #graph {
+            width: 90%;
+            height: 400px;
+            margin: 20px auto;
+        }
+        #controls {
+            text-align: center;
+            margin: 20px;
+        }
+        .button {
+            padding: 10px 20px;
+            margin: 10px;
+            font-size: 16px;
+            cursor: pointer;
+        }
+        #status {
+            text-align: center;
+            margin: 20px;
+        }
+        .organ {
+            display: inline-block;
+            margin: 0 10px;
+        }
+        .organ.flash {
+            animation: flash 1s infinite;
+        }
+        @keyframes flash {
+            0% { background-color: red; }
+            50% { background-color: white; }
+            100% { background-color: red; }
+        }
+        #explanation {
+            text-align: center;
+            margin: 20px;
+        }
+        #log {
+            text-align: left;
+        }
+    </style>
+</head>
+<body>
+    <div id="main">
+        <h1>Hypoglycemic Simulator</h1>
+        <div id="graph">
+            <canvas id="chartCanvas"></canvas>
+        </div>
+        <div id="controls">
+            <button class="button" onclick="applyEffect('short_insulin', 10)">Short-Acting Insulin 10u</button>
+            <button class="button" onclick="applyEffect('short_insulin', 20)">Short-Acting Insulin 20u</button>
+            <button class="button" onclick="applyEffect('long_insulin', 10)">Long-Acting Insulin 10u</button>
+            <button class="button" onclick="applyEffect('long_insulin', 20)">Long-Acting Insulin 20u</button>
+            <button class="button" onclick="applyEffect('glucagon', 10)">Glucagon 10u</button>
+            <button class="button" onclick="applyEffect('glucagon', 20)">Glucagon 20u</button>
+            <button class="button" onclick="applyEffect('food', 20)">Food 20g</button>
+            <button class="button" onclick="applyEffect('metformin', 500)">Metformin 500mg</button>
+            <button class="button" onclick="applyEffect('sulfonylurea', 5)">Sulfonylurea 5mg</button>
+            <button class="button" onclick="applyEffect('sglt2', 10)">SGLT2 Inhibitor 10mg</button>
+            <button class="button" onclick="applyEffect('glp1', 1)">GLP-1 Agonist 1mg</button>
+        </div>
+        <div id="status">
+            <div class="organ" id="heart">❤️ CHF</div>
+            <div class="organ" id="kidney">🩺 Kidney</div>
+            <div class="organ" id="liver">🍺 Liver</div>
+            <div class="organ" id="pancreas">🔹 Pancreas</div>
+            <div class="organ" id="weight">⚖️ Weight</div>
+            <div class="organ" id="acidosis">⚠️ Acidosis</div>
+            <div id="stick-figure">🙂</div>
+        </div>
+        <div id="score">Score: 0</div>
+        <div id="explanation">Explanation: Blood sugar is stable.</div>
+    </div>
+    <div id="sidebar">
+        <h2>Event Log</h2>
+        <div id="log"></div>
+    </div>
+    
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script>
+        const maxDataPoints = 50; // Maximum number of data points to display
+        let bloodSugarLevels = [];
+        let time = 0;
+        let score = 0;
+        let activeEffects = [];
+
+        // Initialize blood sugar levels with random values
+        for (let i = 0; i < maxDataPoints; i++) {
+            bloodSugarLevels.push(100 + (Math.random() - 0.5) * 10);
+        }
+
+        // Set up the chart
+        const ctx = document.getElementById('chartCanvas').getContext('2d');
+        const chart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: Array.from({length: maxDataPoints}, (_, i) => i),
+                datasets: [{
+                    label: 'Blood Sugar Level',
+                    data: bloodSugarLevels,
+                    borderColor: 'blue',
+                    borderWidth: 2,
+                    fill: false
+                }]
+            },
+            options: {
+                animation: {
+                    duration: 0 // Disable animation for continuous movement
+                },
+                scales: {
+                    x: {
+                        type: 'linear',
+                        position: 'bottom'
+                    },
+                    y: {
+                        beginAtZero: true,
+                        min: 40,
+                        max: 400
+                    }
+                }
+            }
+        });
+
+        // Function to update the graph continuously
+        function updateGraph() {
+            time += 1;
+            let lastLevel = bloodSugarLevels[bloodSugarLevels.length - 1];
+            // Apply active effects
+            activeEffects.forEach(effect => {
+                effect.remainingTime -= 1;
+                lastLevel += effect.magnitude;
+            });
+
+            // Remove expired effects
+            activeEffects = activeEffects.filter(effect => effect.remainingTime > 0);
+
+            // Simulate random baseline fluctuation
+            let newLevel = lastLevel + (Math.random() - 0.5) * 5;
+
+            if (newLevel < 40) {
+                newLevel = 40; // Minimum blood sugar level
+            } else if (newLevel > 400) {
+                newLevel = 400; // Maximum blood sugar level
+            }
+
+            bloodSugarLevels.push(newLevel);
+            if (bloodSugarLevels.length > maxDataPoints) {
+                bloodSugarLevels.shift();
+            }
+
+            chart.data.labels = Array.from({length: bloodSugarLevels.length}, (_, i) => time - bloodSugarLevels.length + i + 1);
+            chart.data.datasets[0].data = bloodSugarLevels;
+            chart.update();
+
+            updateScore(newLevel);
+            updateSideEffects(newLevel);
+        }
+
+        // Function to apply an effect to blood sugar level
+        function applyEffect(effect, amount) {
+            let explanationText = "";
+            let bloodSugarEffect;
+            let effectChangeRate;
+
+            switch(effect) {
+                case 'short_insulin':
+                    bloodSugarEffect = -amount / 10;
+                    effectChangeRate = 10;
+                    explanationText = `Short-Acting Insulin ${amount}u administered. Blood sugar decreases significantly.`;
+                    checkContraindications('short_insulin');
+                    break;
+                case 'long_insulin':
+                    bloodSugarEffect = -amount / 20;
+                    effectChangeRate = 20;
+                    explanationText = `Long-Acting Insulin ${amount}u administered. Blood sugar decreases moderately over time.`;
+                    checkContraindications('long_insulin');
+                    break;
+                case 'glucagon':
+                    bloodSugarEffect = amount / 10;
+                    effectChangeRate = 10;
+                    explanationText = `Glucagon ${amount}u administered. Blood sugar increases significantly.`;
+                    break;
+                case 'food':
+                    bloodSugarEffect = amount / 10;
+                    effectChangeRate = 5;
+                    explanationText = `Food ${amount}g consumed. Blood sugar increases.`;
+                    break;
+                case 'metformin':
+                    bloodSugarEffect = -amount / 250;
+                    effectChangeRate = 20;
+                    explanationText = `Metformin ${amount}mg administered. Blood sugar decreases slightly.`;
+                    checkContraindications('metformin');
+                    break;
+                case 'sulfonylurea':
+                    bloodSugarEffect = -amount / 2.5;
+                    effectChangeRate = 15;
+                    explanationText = `Sulfonylurea ${amount}mg administered. Blood sugar decreases significantly.`;
+                    checkContraindications('sulfonylurea');
+                    break;
+                case 'sglt2':
+                    bloodSugarEffect = -amount / 10;
+                    effectChangeRate = 15;
+                    explanationText = `SGLT2 Inhibitor ${amount}mg administered. Blood sugar decreases.`;
+                    checkContraindications('sglt2');
+                    break;
+                case 'glp1':
+                    bloodSugarEffect = -amount * 2;
+                    effectChangeRate = 15;
+                    explanationText = `GLP-1 Agonist ${amount}mg administered. Blood sugar decreases and satiety increases.`;
+                    checkContraindications('glp1');
+                    break;
+                default:
+                    bloodSugarEffect = 0;
+                    effectChangeRate = 0;
+                    explanationText = "No new medication administered.";
+            }
+
+            activeEffects.push({magnitude: bloodSugarEffect, remainingTime: effectChangeRate});
+
+            logEvent(explanationText);
+            document.getElementById('explanation').innerText = `Explanation: ${explanationText}`;
+        }
+
+        // Function to check for contraindications
+        function checkContraindications(medication) {
+            const heart = document.getElementById('heart');
+            const kidney = document.getElementById('kidney');
+            const liver = document.getElementById('liver');
+            const pancreas = document.getElementById('pancreas');
+            const weight = document.getElementById('weight');
+            const acidosis = document.getElementById('acidosis');
+
+            // Reset flashing organs
+            heart.classList.remove('flash');
+            kidney.classList.remove('flash');
+            liver.classList.remove('flash');
+            pancreas.classList.remove('flash');
+            weight.classList.remove('flash');
+            acidosis.classList.remove('flash');
+
+            // Example contraindications
+            switch(medication) {
+                case 'short_insulin':
+                case 'long_insulin':
+                    kidney.classList.add('flash');
+                    break;
+                case 'metformin':
+                    heart.classList.add('flash');
+                    liver.classList.add('flash');
+                    acidosis.classList.add('flash');
+                    break;
+                case 'sulfonylurea':
+                    pancreas.classList.add('flash');
+                    break;
+                case 'sglt2':
+                    heart.classList.add('flash');
+                    kidney.classList.add('flash');
+                    weight.classList.add('flash');
+                    break;
+                case 'glp1':
+                    heart.classList.add('flash');
+                    weight.classList.add('flash');
+                    break;
+            }
+        }
+
+        // Function to update the score
+        function updateScore(level) {
+            if (level >= 70 && level <= 130) {
+                score += 1;
+            } else if (level < 60 || level > 200) {
+                score -= 2;
+            }
+            document.getElementById('score').innerText = `Score: ${score}`;
+        }
+
+        // Function to update side effects
+        function updateSideEffects(level) {
+            const stickFigure = document.getElementById('stick-figure');
+
+            if (level < 70) {
+                stickFigure.innerText = '😰'; // Hypoglycemia
+            } else if (level > 130) {
+                stickFigure.innerText = '😵'; // Hyperglycemia
+            } else {
+                stickFigure.innerText = '🙂'; // Normal
+            }
+        }
+
+        // Function to log events
+        function logEvent(message) {
+            const logDiv = document.getElementById('log');
+            const newLogEntry = document.createElement('div');
+            newLogEntry.textContent = message;
+            logDiv.prepend(newLogEntry);
+        }
+
+        // Function to apply random events
+        function applyRandomEvents() {
+            const events = ['food', 'exercise'];
+            const event = events[Math.floor(Math.random() * events.length)];
+            let explanationText;
+            let bloodSugarEffect;
+            let effectChangeRate;
+
+            if (event === 'food') {
+                bloodSugarEffect = 15 / 10;
+                effectChangeRate = 5;
+                explanationText = "Random event: Food consumed. Blood sugar increases.";
+            } else {
+                bloodSugarEffect = -15 / 10;
+                effectChangeRate = 5;
+                explanationText = "Random event: Exercise. Blood sugar decreases.";
+            }
+
+            activeEffects.push({magnitude: bloodSugarEffect, remainingTime: effectChangeRate});
+
+            logEvent(explanationText);
+            document.getElementById('explanation').innerText = `Explanation: ${explanationText}`;
+        }
+
+        // Initial setup
+        document.addEventListener('DOMContentLoaded', () => {
+            document.getElementById('score').innerText = `Score: ${score}`;
+            setInterval(updateGraph, 100); // Update graph every 100ms for continuous changes
+            setInterval(applyRandomEvents, 15000); // Apply random events every 15 seconds
+        });
+    </script>
+</body>
+</html>
